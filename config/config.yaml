@@ -1,0 +1,120 @@
+# Rappi Competitive Intelligence - Configuration
+
+# Direcciones representativas en México para scrapear
+# Seleccionamos zonas diversas para cobertura geográfica
+
+addresses:
+  - name: "Polanco (Zona Rica)"
+    zip_code: "11560"
+    zone_type: "upscale"
+    
+  - name: "Condesa (Trend)"
+    zip_code: "06140"
+    zone_type: "trendy"
+    
+  - name: "Centro Histórico"
+    zip_code: "06000"
+    zone_type: "downtown"
+    
+  - name: "Coyoacán (Familiar)"
+    zip_code: "04300"
+    zone_type: "residential"
+    
+  - name: "Santa Fe (Corporativo)"
+    zip_code: "01219"
+    zone_type: "corporate"
+
+  - name: "Iztapalapa (Popular)"
+    zip_code: "09310"
+    zone_type: "popular"
+
+  - name: "Roma Norte (Hipster)"
+    zip_code: "06700"
+    zone_type: "trendy"
+
+  - name: "Narvarte (Familiar)"
+    zip_code: "03600"
+    zone_type: "residential"
+
+  - name: "Insurgentes Sur (Universitario)"
+    zip_code: "03900"
+    zone_type: "university"
+
+  - name: "Pedregal (Exclusive)"
+    zip_code: "01900"
+    zone_type: "upscale"
+
+# Productos de referencia para comparar
+reference_products:
+  fast_food:
+    - name: "Big Mac"
+      brand: "McDonald's"
+      description: "Hamburguesa Big Mac completa"
+      
+    - name: "Combo Mediano McDonald's"
+      brand: "McDonald's"
+      description: "Hamburguesa + papas medianas + bebida"
+      
+    - name: "Nuggets 6"
+      brand: "McDonald's"
+      description: "6 piezas de nuggets"
+      
+    - name: "Whopper"
+      brand: "Burger King"
+      description: "Hamburguesa Whopper"
+      
+  retail:
+    - name: "Coca-Cola 500ml"
+      brand: "Coca-Cola"
+      description: "Bebida carbonatada 500ml"
+      
+    - name: "Agua Embotellada 1L"
+      brand: "Ciel"
+      description: "Agua embotellada 1 litro"
+
+# Plataformas a scrapear
+platforms:
+  rappi:
+    enabled: true
+    priority: 1
+    
+  uber_eats:
+    enabled: true
+    priority: 2
+    
+  didi_food:
+    enabled: true
+    priority: 3
+
+# Configuración de scraping
+scraping:
+  # Delay entre requests (segundos)
+  delay_between_requests: 3
+  
+  # Timeout para cada page load (segundos)
+  page_load_timeout: 30
+  
+  # Número de retries en caso de fallo
+  max_retries: 3
+  
+  # User agent a usar
+  user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+  
+  # Modo headless (sin navegador visible)
+  headless: true
+
+# Métricas a recolectar
+metrics:
+  - product_price
+  - delivery_fee
+  - service_fee
+  - estimated_delivery_time
+  - active_discounts
+  - availability
+  - final_total_price
+
+# Output
+output:
+  format: "csv"  # csv o json
+  raw_data_path: "data/raw"
+  processed_data_path: "data/processed"
