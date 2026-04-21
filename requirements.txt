@@ -1,0 +1,29 @@
+# Competitive Intelligence Rappi - Dependencies
+
+# Web Scraping
+playwright==1.40.0
+beautifulsoup4==4.12.2
+requests==2.31.0
+lxml==4.9.3
+html5lib==1.1
+selenium==4.15.2
+
+# Data Analysis
+pandas==2.1.4
+numpy==1.26.2
+
+# Visualization
+matplotlib==3.8.2
+plotly==5.18.0
+seaborn==0.13.0
+
+# Dashboard
+streamlit==1.29.0
+
+# Utils
+python-dotenv==1.0.0
+pyyaml==6.0.1
+tqdm==4.66.1
+
+# Optional: for proxy rotation
+requests-cache==1.1.1
