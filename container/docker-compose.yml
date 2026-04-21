@@ -1,0 +1,88 @@
+# Competitive Intelligence Rappi - Docker Compose
+# Usar: docker compose -f container/docker-compose.yml up
+
+services:
+  # ==========================================
+  # SCRAPER SERVICE
+  # Ejecuta los scrapers y guarda datos
+  # ==========================================
+  scraper:
+    build:
+      context: ..
+      dockerfile: container/Dockerfile
+    container_name: rappi_ci_scraper
+    volumes:
+      - ../data:/app/data
+      - ../config:/app/config
+      - ../reports:/app/reports
+    environment:
+      - PYTHONUNBUFFERED=1
+      - SCRAPING_MODE=production
+      - PLATFORMS=rappi,uber_eats,didi_food
+    command: python src/scrapers/run_all.py
+    restart: "no"
+
+  # ==========================================
+  # ANALYSIS SERVICE
+  # Genera análisis y visualizaciones
+  # ==========================================
+  analysis:
+    build:
+      context: ..
+      dockerfile: container/Dockerfile
+    container_name: rappi_ci_analysis
+    volumes:
+      - ../data:/app/data
+      - ../reports:/app/reports
+      - ../config:/app/config
+    environment:
+      - PYTHONUNBUFFERED=1
+    command: python src/analysis/generate_report.py
+    restart: "no"
+    depends_on:
+      - scraper
+
+  # ==========================================
+  # DASHBOARD SERVICE (Opcional)
+  # Streamlit dashboard para visualizar datos
+  # ==========================================
+  dashboard:
+    build:
+      context: ..
+      dockerfile: container/Dockerfile
+    container_name: rappi_ci_dashboard
+    volumes:
+      - ../data:/app/data
+      - ../reports:/app/reports
+      - ../config:/app/config
+    environment:
+      - PYTHONUNBUFFERED=1
+    ports:
+      - "8501:8501"
+    command: streamlit run src/analysis/dashboard.py --server.port 8501 --server.address 0.0.0.0
+    restart: "no"
+    depends_on:
+      - scraper
+
+  # ==========================================
+  # JUPYTER NOTEBOOK SERVICE (Opcional)
+  # Para análisis interactivo
+  # ==========================================
+  jupyter:
+    build:
+      context: ..
+      dockerfile: container/Dockerfile
+    container_name: rappi_ci_jupyter
+    volumes:
+      - ../data:/app/data
+      - ../reports:/app/reports
+      - ../config:/app/config
+    environment:
+      - PYTHONUNBUFFERED=1
+      - JUPYTER_TOKEN=rappi_ci_token
+    ports:
+      - "8888:8888"
+    command: jupyter notebook --ip=0.0.0.0 --port=8888 --allow-root --NotebookApp.token=rappi_ci_token
+    restart: "no"
+    profiles:
+      - jupyter  # Solo ejecutar con: docker compose --profile jupyter up
