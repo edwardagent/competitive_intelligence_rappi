@@ -45,9 +45,11 @@ WORKDIR /app
 
 # Copiar requirements primero para aprovechar cache de Docker
 COPY requirements.txt .
+COPY container/requirements.txt /tmp/container_requirements.txt
 
-# Instalar dependencias de Python
-RUN pip install --no-cache-dir -r requirements.txt
+# Instalar dependencias de Python + jupyter (container-specific)
+RUN pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir -r /tmp/container_requirements.txt
 
 # Instalar Playwright browsers (chromium)
 RUN playwright install --with-deps chromium 2>&1 || playwright install chromium

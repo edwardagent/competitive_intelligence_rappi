@@ -33,6 +33,9 @@ class ProductData:
     zone_type: str
     product_name: str
     product_brand: str
+    lat: Optional[float] = None
+    lon: Optional[float] = None
+    density: Optional[float] = None
     product_price: Optional[float] = None
     delivery_fee: Optional[float] = None
     service_fee: Optional[float] = None
@@ -41,7 +44,7 @@ class ProductData:
     availability: Optional[str] = None
     final_total_price: Optional[float] = None
     scraped_at: str = ""
-    
+
     def __post_init__(self):
         if not self.scraped_at:
             self.scraped_at = datetime.now().isoformat()
@@ -62,10 +65,11 @@ class BaseScraper(ABC):
     Clase base abstracta para scrapers.
     Cada plataforma (Rappi, Uber Eats, DiDi Food) debe implementar sus propios scrapers.
     """
-    
-    def __init__(self, config_path: str = "config/config.yaml"):
+
+    def __init__(self, config_path: str = "config/config.yaml", addresses_csv: str = "data/resultados_mexico_direcciones.csv"):
         """Inicializar el scraper con configuración."""
         self.config = self._load_config(config_path)
+        self.addresses_csv = addresses_csv
         self.scraper_config = ScraperConfig(
             delay_between_requests=self.config.get('scraping', {}).get('delay_between_requests', 3),
             page_load_timeout=self.config.get('scraping', {}).get('page_load_timeout', 30),
@@ -75,7 +79,7 @@ class BaseScraper(ABC):
         )
         self.platform_name = "base"
         self.data: List[ProductData] = []
-        
+
     def _load_config(self, config_path: str) -> dict:
         """Cargar configuración desde archivo YAML."""
         try:
@@ -84,13 +88,64 @@ class BaseScraper(ABC):
         except FileNotFoundError:
             logger.warning(f"Config file not found: {config_path}, using defaults")
             return {}
-    
+
+    def _load_addresses_from_csv(self, csv_path: str) -> List[Dict]:
+        """Cargar direcciones desde archivo CSV con lat, lon, density, address."""
+        addresses = []
+        try:
+            with open(csv_path, 'r', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    addresses.append({
+                        'name': row['address'],
+                        'lat': float(row['lat']),
+                        'lon': float(row['lon']),
+                        'density': float(row['density']),
+                        'zip_code': '',  # No zip code in CSV
+                        'zone_type': 'from_csv'
+                    })
+            logger.info(f"Loaded {len(addresses)} addresses from {csv_path}")
+        except FileNotFoundError:
+            logger.warning(f"Addresses CSV not found: {csv_path}")
+        except Exception as e:
+            logger.error(f"Error loading addresses CSV: {e}")
+        return addresses
+
     def get_addresses(self) -> List[Dict]:
-        """Obtener lista de direcciones a scrapear."""
-        return self.config.get('addresses', [])
-    
+        """Obtener lista de direcciones a scrapear desde CSV."""
+        return self._load_addresses_from_csv(self.addresses_csv)
+
+    def _load_reference_products_from_csv(self, csv_path: str) -> Dict:
+        """Cargar productos de referencia desde archivo CSV."""
+        products = {'fast_food': [], 'retail': []}
+        try:
+            with open(csv_path, 'r', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    product = {
+                        'name': row['product_name'],
+                        'brand': row.get('brand', ''),
+                        'description': row.get('description', '')
+                    }
+                    category = row.get('category', 'fast_food').lower()
+                    if 'retail' in category:
+                        products['retail'].append(product)
+                    else:
+                        products['fast_food'].append(product)
+            logger.info(f"Loaded {len(products['fast_food'])} fast_food and {len(products['retail'])} retail products from {csv_path}")
+        except FileNotFoundError:
+            logger.warning(f"Reference products CSV not found: {csv_path}, falling back to config")
+        except Exception as e:
+            logger.error(f"Error loading reference products CSV: {e}")
+        return products
+
     def get_reference_products(self) -> Dict:
-        """Obtener productos de referencia."""
+        """Obtener productos de referencia desde CSV, con fallback al config."""
+        csv_path = "data/reference_products.csv"
+        csv_products = self._load_reference_products_from_csv(csv_path)
+        # If CSV has products, return those; otherwise fall back to config
+        if csv_products['fast_food'] or csv_products['retail']:
+            return csv_products
         return self.config.get('reference_products', {})
     
     @abstractmethod
@@ -124,9 +179,9 @@ class BaseScraper(ABC):
             products = self.get_reference_products()
             
             # Iterar sobre cada dirección
-            for address in addresses:
-                logger.info(f"Scraping address: {address['name']} ({address['zip_code']})")
-                
+            for idx, address in enumerate(addresses):
+                logger.info(f"Scraping address: {address['name']} (lat={address['lat']}, lon={address['lon']}, density={address['density']})")
+
                 # Iterar sobre productos de fast food
                 for product in products.get('fast_food', []):
                     try:
@@ -135,10 +190,10 @@ class BaseScraper(ABC):
                         logger.info(f"  ✓ Scraped: {product['name']} at {address['name']}")
                     except Exception as e:
                         logger.error(f"  ✗ Error scraping {product['name']}: {e}")
-                    
+
                     # Delay entre requests
                     time.sleep(self.scraper_config.delay_between_requests)
-                
+
                 # Iterar sobre productos retail
                 for product in products.get('retail', []):
                     try:
@@ -147,8 +202,12 @@ class BaseScraper(ABC):
                         logger.info(f"  ✓ Scraped: {product['name']} at {address['name']}")
                     except Exception as e:
                         logger.error(f"  ✗ Error scraping {product['name']}: {e}")
-                    
+
                     time.sleep(self.scraper_config.delay_between_requests)
+
+                # Guardar datos incrementally después de cada dirección
+                if self.data and hasattr(self, '_save_progress'):
+                    self._save_progress(idx + 1, len(addresses))
                     
         finally:
             self.close_browser()
@@ -189,3 +248,12 @@ class BaseScraper(ABC):
     def get_data(self) -> List[ProductData]:
         """Obtener los datos recolectados."""
         return self.data
+
+    def _save_progress(self, current: int, total: int):
+        """Guardar datos de forma incremental para no perderlos si el proceso falla."""
+        if not self.data:
+            return
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        csv_path = Path("data/raw") / f"rappi_data_{timestamp}_partial_{current}_{total}.csv"
+        self.save_to_csv(str(csv_path))
+        logger.info(f"Progress saved: {current}/{total} addresses ({len(self.data)} records)")
