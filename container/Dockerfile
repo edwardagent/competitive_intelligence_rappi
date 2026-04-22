@@ -37,6 +37,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxkbcommon0 \
     libxrandr2 \
     xdg-utils \
+    libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
 # Crear directorio de trabajo
@@ -49,11 +50,12 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Instalar Playwright browsers (chromium)
-RUN playwright install chromium && \
-    playwright install-deps chromium
+RUN playwright install --with-deps chromium 2>&1 || playwright install chromium
 
 # Copiar código de la aplicación
-COPY .. .
+COPY src/ ./src/
+COPY config/ ./config/
+COPY requirements.txt .
 
 # Crear directorios para datos
 RUN mkdir -p /app/data/raw /app/data/processed /app/reports
