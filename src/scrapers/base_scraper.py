@@ -58,6 +58,7 @@ class ScraperConfig:
     max_retries: int = 3
     user_agent: str = ""
     headless: bool = True
+    save_screenshots: bool = False  # New parameter to enable/disable screenshot saving
 
 
 class BaseScraper(ABC):
@@ -66,7 +67,7 @@ class BaseScraper(ABC):
     Cada plataforma (Rappi, Uber Eats, DiDi Food) debe implementar sus propios scrapers.
     """
 
-    def __init__(self, config_path: str = "config/config.yaml", addresses_csv: str = "data/resultados_mexico_direcciones.csv"):
+    def __init__(self, config_path: str = "config/config.yaml", addresses_csv: str = "data/resultados_mexico_direcciones.csv", save_screenshots: bool = False):
         """Inicializar el scraper con configuración."""
         self.config = self._load_config(config_path)
         self.addresses_csv = addresses_csv
@@ -75,10 +76,12 @@ class BaseScraper(ABC):
             page_load_timeout=self.config.get('scraping', {}).get('page_load_timeout', 30),
             max_retries=self.config.get('scraping', {}).get('max_retries', 3),
             user_agent=self.config.get('scraping', {}).get('user_agent', ''),
-            headless=self.config.get('scraping', {}).get('headless', True)
+            headless=self.config.get('scraping', {}).get('headless', True),
+            save_screenshots=save_screenshots  # Enable/disable screenshot saving
         )
         self.platform_name = "base"
         self.data: List[ProductData] = []
+        self.screenshot_counter = 0  # Counter for naming screenshots
 
     def _load_config(self, config_path: str) -> dict:
         """Cargar configuración desde archivo YAML."""
@@ -165,7 +168,43 @@ class BaseScraper(ABC):
         Debe ser implementado por cada subclase.
         """
         pass
-    
+
+    def _take_screenshot(self, page, address: Dict, product: Dict, suffix: str = ""):
+        """
+        Take a screenshot if save_screenshots is enabled.
+        
+        Args:
+            page: Playwright page object
+            address: Address dict with 'name', 'lat', 'lon', etc.
+            product: Product dict with 'name', 'brand', etc.
+            suffix: Suffix to add to filename (e.g., '_search', '_detail')
+        """
+        if not self.scraper_config.save_screenshots:
+            return
+        
+        try:
+            # Create screenshot directory structure
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            safe_addr = "".join(c if c.isalnum() else "_" for c in address['name'][:30])
+            safe_prod = "".join(c if c.isalnum() else "_" for c in product['name'][:30])
+            
+            # Directory: data/screenshots/{address_name}/
+            screenshot_dir = Path("data/screenshots") / f"{safe_addr}"
+            screenshot_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Filename: {product_name}_{timestamp}{suffix}.png
+            filename = f"{safe_prod}_{timestamp}{suffix}.png"
+            screenshot_path = screenshot_dir / filename
+            
+            # Take screenshot
+            page.screenshot(path=str(screenshot_path), full_page=True)
+            
+            # Log with relative path for clarity
+            logger.info(f"  📸 Screenshot saved: {screenshot_path}")
+            
+        except Exception as e:
+            logger.warning(f"  ⚠ Failed to save screenshot: {e}")
+
     def scrape_all(self) -> List[ProductData]:
         """
         Ejecutar scraping para todas las direcciones y productos.

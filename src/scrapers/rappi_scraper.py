@@ -26,8 +26,8 @@ class RappiScraper(BaseScraper):
     MVP Version: Search works without explicit address selection.
     """
     
-    def __init__(self, config_path: str = "config/config.yaml", addresses_csv: str = "data/resultados_mexico_direcciones.csv"):
-        super().__init__(config_path, addresses_csv)
+    def __init__(self, config_path: str = "config/config.yaml", addresses_csv: str = "data/resultados_mexico_direcciones.csv", save_screenshots: bool = False):
+        super().__init__(config_path, addresses_csv, save_screenshots=save_screenshots)
         self.platform_name = "Rappi"
         self.browser: Optional[Browser] = None
         self.page: Optional[Page] = None
@@ -111,6 +111,9 @@ class RappiScraper(BaseScraper):
                 self.page.goto(self.base_url, timeout=30000)
                 self._wait_for_page_stable(5)
             
+            # Take screenshot of address overview (before search)
+            self._take_screenshot(self.page, address, product, "_01_before_search")
+            
             # Obtener input de búsqueda
             inputs = self.page.query_selector_all('input')
             if not inputs:
@@ -130,6 +133,9 @@ class RappiScraper(BaseScraper):
             
             # Esperar resultados
             self._wait_for_page_stable(5)
+            
+            # Take screenshot of search results
+            self._take_screenshot(self.page, address, product, "_02_search_results")
             
             logger.info(f"Search submitted for: {product['name']}")
             logger.info(f"Current URL: {self.page.url}")
@@ -273,7 +279,7 @@ class RappiScraper(BaseScraper):
     def _extract_all_page_info(self, product: dict) -> dict:
         """
         Extraer toda la información relevante de la página de resultados.
-        Usa parseo de texto porque los selectores CSS son complejos/dinámicos.
+        Usa tanto CSS (strikethrough detection) como parseo de texto.
         """
         info = {
             'product_price': None,
@@ -294,45 +300,110 @@ class RappiScraper(BaseScraper):
                 logger.warning("Body text is empty or too short")
                 return info
 
+            # ===== DETECCIÓN DE DESCuentos POR CSS (STRIKETHROUGH) =====
+            # Usar JavaScript para obtener precios con estilos CSS
+            try:
+                price_styles = self.page.evaluate("""
+                    () => {
+                        const allElements = document.querySelectorAll('span, div, p, strong, b, em, i, small, mark');
+                        const prices = [];
+                        
+                        for (const el of allElements) {
+                            const text = el.innerText || '';
+                            const priceMatch = text.match(/\$?\s*([\d,]+\.?\d*)/);
+                            
+                            if (priceMatch && text.length < 60 && text.length > 2) {
+                                const computed = window.getComputedStyle(el);
+                                const isStrikethrough = computed.textDecorationLine === 'line-through' || 
+                                                       computed.textDecoration.includes('line-through');
+                                
+                                prices.push({
+                                    text: text.substring(0, 60),
+                                    raw_price: priceMatch[1],
+                                    is_strikethrough: isStrikethrough,
+                                    color: computed.color
+                                });
+                            }
+                        }
+                        
+                        return prices;
+                    }
+                """)
+                
+                # Separar precios old (strikethrough) y new (normal)
+                old_prices = []
+                new_prices = []
+                
+                for p in price_styles:
+                    try:
+                        price_val = float(p['raw_price'].replace(',', ''))
+                        if 20 < price_val < 1000:
+                            if p['is_strikethrough']:
+                                old_prices.append((p['text'], price_val))
+                            else:
+                                new_prices.append((p['text'], price_val))
+                    except:
+                        continue
+                
+                # Calcular descuentos: el precio NEW siempre debe ser más barato que OLD
+                # discount = (old - new) / old * 100 (diferencia relativa)
+                if old_prices and new_prices:
+                    best_discount = 0
+                    best_old = None
+                    best_new = None
+                    
+                    for old_text, old_val in old_prices:
+                        for new_text, new_val in new_prices:
+                            if old_val > new_val:  # Discount scenario
+                                discount_pct = (old_val - new_val) / old_val * 100
+                                if discount_pct > best_discount:
+                                    best_discount = discount_pct
+                                    best_old = old_val
+                                    best_new = new_val  # The cheapest new price
+                    
+                    if best_discount > 0:
+                        info['discounts'] = f"{best_discount:.1f}% OFF"
+                        info['product_price'] = best_new  # Use the NEW (cheaper) price
+                        logger.info(f"CSS Discount detected: {best_discount:.1f}% OFF (old: ${best_old}, new: ${best_new})")
+                
+                # Si no encontramos descuento pero sí tenemos precios nuevos
+                elif new_prices and not info['product_price']:
+                    # Tomar el precio más barato de los nuevos (validación: siempre más barato)
+                    cheapest_new = min(new_prices, key=lambda x: x[1])
+                    info['product_price'] = cheapest_new[1]
+                    logger.info(f"No discount found. Using cheapest price: ${cheapest_new[1]}")
+                    
+            except Exception as e:
+                logger.warning(f"CSS discount detection failed: {e}")
+
             lines = [l.strip() for l in body_text.split('\n') if l.strip()]
 
-            # Primero extraer el precio del producto específico que buscamos
-            product_name_lower = product.get('name', '').lower()
-
-            for i, line in enumerate(lines):
-                line_lower = line.lower()
-
-                # Buscar el producto específico por nombre
-                if product_name_lower and product_name_lower in line_lower:
-                    # Buscar precio en la misma línea o líneas cercanas
-                    for j in range(max(0, i-2), min(len(lines), i+3)):
-                        price_line = lines[j]
-                        price_match = re.search(r'\$?\s*([\d,]+\.?\d*)', price_line)
-                        if price_match:
-                            val = float(price_match.group(1).replace(',', ''))
-                            if 50 < val < 500:
-                                info['product_price'] = val
-                                info['product_name'] = lines[i] if len(lines[i]) < 100 else None
-                                logger.info(f"Found product price: ${val} for {product.get('name')}")
-                                break
-                    if info['product_price']:
-                        break
-
-            # Si no encontramos el producto específico, buscar primer precio en rango
+            # Primero extraer el precio del producto específico si no lo tenemos
             if not info['product_price']:
-                for line in lines:
-                    price_match = re.search(r'\$?\s*([\d,]+\.?\d*)', line)
-                    if price_match:
-                        val = float(price_match.group(1).replace(',', ''))
-                        if 50 < val < 500:
-                            info['product_price'] = val
+                product_name_lower = product.get('name', '').lower()
+                
+                for i, line in enumerate(lines):
+                    line_lower = line.lower()
+                    
+                    if product_name_lower and product_name_lower in line_lower:
+                        for j in range(max(0, i-2), min(len(lines), i+3)):
+                            price_line = lines[j]
+                            price_match = re.search(r'\$?\s*([\d,]+\.?\d*)', price_line)
+                            if price_match:
+                                val = float(price_match.group(1).replace(',', ''))
+                                if 50 < val < 500:
+                                    info['product_price'] = val
+                                    info['product_name'] = lines[i] if len(lines[i]) < 100 else None
+                                    logger.info(f"Found product price: ${val} for {product.get('name')}")
+                                    break
+                        if info['product_price']:
                             break
 
-            # Ahora buscar delivery fee, service fee, tiempo, descuentos, disponibilidad
+            # Ahora buscar delivery fee, service fee, tiempo, disponibilidad
             for i, line in enumerate(lines):
                 line_lower = line.lower()
-
-                # Buscar tiempo estimado: "30 - 40 min", "25 min", "30-40min"
+                
+                # Buscar tiempo estimado
                 if info['estimated_time'] is None:
                     time_match = re.search(r'(\d+)\s*[-–]\s*(\d+)\s*(min|minutos|hrs|horas)', line_lower)
                     if time_match:
@@ -342,27 +413,21 @@ class RappiScraper(BaseScraper):
                         if single_time and info['estimated_time'] is None:
                             info['estimated_time'] = f"{single_time.group(1)} min"
 
-                # Buscar precio de envío / delivery fee
-                # Expert approach: look in full text context, not just individual lines
-                # Rappi shows "Envío" info in multiple places: near products, in banners, in cart summaries
+                # Buscar delivery fee - solo gratis si dice "envío gratis" explícitamente
                 if info['delivery_fee'] is None:
-                    # Check entire body_text for delivery patterns (more reliable than per-line)
                     if re.search(r'env(ío|io)\s*gratis|sin\s*costo\s*(?:de\s*)?env|delivery\s*gratis|s\/ costo|s\/ env|envío\s*0', body_text):
                         info['delivery_fee'] = 0.0
-                    # Look for fee in structured patterns
                     elif re.search(r'envío[:\s]+\$?\s*([\d,]+)', body_text):
                         fee_match = re.search(r'envío[:\s]+\$?\s*([\d,]+)', body_text)
                         val = float(fee_match.group(1).replace(',', ''))
                         if val < 200:
                             info['delivery_fee'] = val
-                    # Look near "tiempo" or "min" context lines where fee might appear
                     elif i > 0 and re.search(r'env|delivery|envío', line_lower):
                         fee_match = re.search(r'\$?\s*([\d,]+\.?\d*)', line)
                         if fee_match:
                             val = float(fee_match.group(1).replace(',', ''))
                             if 0 < val < 200:
                                 info['delivery_fee'] = val
-                    # Check line-by-line for "costo" or "envío" with amount
                     elif re.search(r'costo|de\s*envío|envío|costo\s*final', line_lower):
                         fee_match = re.search(r'\$?\s*([\d,]+\.?\d*)', line)
                         if fee_match:
@@ -370,9 +435,8 @@ class RappiScraper(BaseScraper):
                             if 0 < val < 200:
                                 info['delivery_fee'] = val
 
-                # Buscar service fee: must have explicit service/fee keywords, not just any small amount
+                # Buscar service fee
                 if info['service_fee'] is None:
-                    # Look for explicit service fee patterns in body
                     if re.search(r'(?:comisión|servicio|service\s*fee|platform\s*fee)\s*\$?\s*([\d,]+)', body_text):
                         fee_match = re.search(r'(?:comisión|servicio|service\s*fee|platform\s*fee)\s*\$?\s*([\d,]+)', body_text)
                         val = float(fee_match.group(1).replace(',', ''))
@@ -384,36 +448,36 @@ class RappiScraper(BaseScraper):
                         if val < 100:
                             info['service_fee'] = val
 
-                # Buscar descuentos: require % to be adjacent to actual discount keywords
-                # Only match actual promo patterns, not bare % (which could be ratings, measurements)
+                # Buscar descuentos por texto (si no los encontramos por CSS)
+                # Solo buscar si discounts sigue siendo None
                 if info['discounts'] is None:
-                    # "XX% de descuento" or "XX% off" - explicit discount forms
+                    # "XX% de descuento" o "XX% off"
                     if re.search(r'\d+\s*%\s*de\s*(?:desc|descuento|off)', line_lower):
                         disc_match = re.search(r'(\d+\s*%\s*de\s*(?:desc|descuento|off))', line_lower)
                         if disc_match:
                             info['discounts'] = disc_match.group(1).strip()
-                    # "XX%off" or "XX%DESC" without space
                     elif re.search(r'\d+\s*%\s*(?:off|desc(?:uento)?)', line_lower, re.IGNORECASE):
                         disc_match = re.search(r'(\d+\s*%\s*(?:off|desc(?:uento)?))', line_lower, re.IGNORECASE)
                         if disc_match:
                             info['discounts'] = disc_match.group(1).strip()
-                    # "2x1", "buy one free", "ahorra $XX"
                     elif re.search(r'(?:2x1|buy\s*one(?:\s+free)?|ahorra\s*\$[\d.]+)', line_lower):
                         disc_match = re.search(r'(2x1|buy\s*one(?:\s+free)?|ahorra\s*\$[\d.]+)', line_lower)
                         if disc_match:
                             info['discounts'] = disc_match.group(1).strip()
-                    # Only match "gratis" / "free" in short lines (product context)
+                    # FIX: Solo marcar "free_item" si NO tiene contexto de envío
+                    # Si la línea tiene "envío" o "delivery", es envío gratis, no producto gratis
                     elif re.search(r'\bgratis\b|\bfree\b', line_lower) and len(line) < 80:
-                        info['discounts'] = 'free_item'
+                        if not re.search(r'envío|delivery|env|send|shipping', line_lower):
+                            info['discounts'] = 'free_item'
 
-                # Buscar disponibilidad: "Abierto" "Cerrado" "Disponible"
+                # Buscar disponibilidad
                 if info['availability'] is None:
                     if re.search(r'\bopen\b|abiert|disponible|disponibl|disponível', line_lower):
                         info['availability'] = 'open'
                     elif re.search(r'\bclosed\b|cerrad|no\s*disponible|unavailable', line_lower):
                         info['availability'] = 'closed'
 
-            # Intentar calcular precio final total si tenemos producto + delivery
+            # Calcular precio final
             if info['product_price'] and info['delivery_fee'] is not None:
                 info['final_total_price'] = info['product_price'] + info['delivery_fee']
                 if info['service_fee']:

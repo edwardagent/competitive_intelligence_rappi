@@ -57,6 +57,7 @@ RUN playwright install --with-deps chromium 2>&1 || playwright install chromium
 # Copiar código de la aplicación
 COPY src/ ./src/
 COPY config/ ./config/
+COPY data/ ./data/
 COPY requirements.txt .
 
 # Crear directorios para datos

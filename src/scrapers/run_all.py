@@ -19,14 +19,14 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def run_rappi_scraper(output_dir: str = "data/raw") -> bool:
+def run_rappi_scraper(output_dir: str = "data/raw", save_screenshots: bool = False) -> bool:
     """Ejecutar el scraper de Rappi."""
     logger.info("=" * 60)
     logger.info("STARTING RAPPI SCRAPER")
     logger.info("=" * 60)
     
     try:
-        scraper = RappiScraper()
+        scraper = RappiScraper(save_screenshots=save_screenshots)
         data = scraper.scrape_all()
         
         if data:
@@ -85,6 +85,12 @@ def main():
         default='data/raw',
         help='Output directory for scraped data'
     )
+    parser.add_argument(
+        '--screenshots',
+        action='store_true',
+        default=False,
+        help='Enable saving screenshots during scraping'
+    )
     
     args = parser.parse_args()
     
@@ -94,7 +100,7 @@ def main():
     results = {}
     
     if args.platform in ['all', 'rappi']:
-        results['rappi'] = run_rappi_scraper(args.output)
+        results['rappi'] = run_rappi_scraper(args.output, save_screenshots=args.screenshots)
     
     if args.platform in ['all', 'uber_eats']:
         results['uber_eats'] = run_uber_eats_scraper(args.output)
